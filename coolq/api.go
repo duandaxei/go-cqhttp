@@ -62,7 +62,22 @@ func (bot *CQBot) CQGetGroupList(noCache bool) MSG {
 func (bot *CQBot) CQGetGroupInfo(groupId int64, noCache bool) MSG {
 	group := bot.Client.FindGroup(groupId)
 	if group == nil {
-		return Failed(100, "GROUP_NOT_FOUND", "群聊不存在")
+		gid := strconv.FormatInt(groupId, 10)
+		info, err := bot.Client.SearchGroupByKeyword(gid)
+		if err != nil {
+			return Failed(100, "GROUP_SEARCH_ERROR", "群聊搜索失败")
+		}
+		for _, g := range info {
+			if g.Code == groupId {
+				return OK(MSG{
+					"group_id":         g.Code,
+					"group_name":       g.Name,
+					"max_member_count": 0,
+					"member_count":     0,
+				})
+			}
+		}
+		return Failed(100, "GROUP_NOT_FOUND", "群聊不存在失败")
 	}
 	if noCache {
 		var err error
@@ -164,6 +179,26 @@ func (bot *CQBot) CQGetGroupFileUrl(groupId int64, fileId string, busId int32) M
 	return OK(MSG{
 		"url": url,
 	})
+}
+
+func (bot *CQBot) CQUploadGroupFile(groupId int64, file, name, folder string) MSG {
+	if !global.PathExists(file) {
+		log.Errorf("上传群文件 %v 失败: 文件不存在", file)
+		return Failed(100, "FILE_NOT_FOUND", "文件不存在")
+	}
+	fs, err := bot.Client.GetGroupFileSystem(groupId)
+	if err != nil {
+		log.Errorf("获取群 %v 文件系统信息失败: %v", groupId, err)
+		return Failed(100, "FILE_SYSTEM_API_ERROR", err.Error())
+	}
+	if folder == "" {
+		folder = "/"
+	}
+	if err = fs.UploadFile(file, name, folder); err != nil {
+		log.Errorf("上传群 %v 文件 %v 失败: %v", groupId, file, err)
+		return Failed(100, "FILE_SYSTEM_UPLOAD_API_ERROR", err.Error())
+	}
+	return OK(nil)
 }
 
 func (bot *CQBot) CQGetWordSlices(content string) MSG {
@@ -970,6 +1005,74 @@ func (bot *CQBot) CQGetStatus() MSG {
 		"online":          bot.Client.Online,
 		"good":            bot.Client.Online,
 		"stat":            bot.Client.GetStatistics(),
+	})
+}
+
+// CQSetEssenceMessage 设置精华消息
+func (bot *CQBot) CQSetEssenceMessage(messageID int32) MSG {
+	msg := bot.GetMessage(messageID)
+	if msg == nil {
+		return Failed(100, "MESSAGE_NOT_FOUND", "消息不存在")
+	}
+	if _, ok := msg["group"]; ok {
+		if err := bot.Client.SetEssenceMessage(msg["group"].(int64), msg["message-id"].(int32), msg["internal-id"].(int32)); err != nil {
+			log.Warnf("设置精华消息 %v 失败: %v", messageID, err)
+			return Failed(100, "SET_ESSENCE_MSG_ERROR", err.Error())
+		}
+	} else {
+		log.Warnf("设置精华消息 %v 失败: 非群聊", messageID)
+		return Failed(100, "SET_ESSENCE_MSG_ERROR", "非群聊")
+	}
+	return OK(nil)
+}
+
+// CQDeleteEssenceMessage 移出精华消息
+func (bot *CQBot) CQDeleteEssenceMessage(messageID int32) MSG {
+	msg := bot.GetMessage(messageID)
+	if msg == nil {
+		return Failed(100, "MESSAGE_NOT_FOUND", "消息不存在")
+	}
+	if _, ok := msg["group"]; ok {
+		if err := bot.Client.DeleteEssenceMessage(msg["group"].(int64), msg["message-id"].(int32), msg["internal-id"].(int32)); err != nil {
+			log.Warnf("移出精华消息 %v 失败: %v", messageID, err)
+			return Failed(100, "DEL_ESSENCE_MSG_ERROR", err.Error())
+		}
+	} else {
+		log.Warnf("移出精华消息 %v 失败: 非群聊", messageID)
+		return Failed(100, "DEL_ESSENCE_MSG_ERROR", "非群聊")
+	}
+	return OK(nil)
+}
+
+// CQGetEssenceMessageList 获取精华消息列表
+func (bot *CQBot) CQGetEssenceMessageList(groupCode int64) MSG {
+	g := bot.Client.FindGroup(groupCode)
+	if g == nil {
+		return Failed(100, "GROUP_NOT_FOUND", "群聊不存在")
+	}
+	msgList, err := bot.Client.GetGroupEssenceMsgList(groupCode)
+	if err != nil {
+		return Failed(100, "GET_ESSENCE_LIST_FOUND", err.Error())
+	}
+	list := make([]MSG, 0)
+	for _, m := range msgList {
+		var msg = MSG{
+			"sender_nick":   m.SenderNick,
+			"sender_time":   m.SenderTime,
+			"operator_time": m.AddDigestTime,
+			"operator_nick": m.AddDigestNick,
+		}
+		msg["sender_id"], _ = strconv.ParseUint(m.SenderUin, 10, 64)
+		msg["operator_id"], _ = strconv.ParseUint(m.AddDigestUin, 10, 64)
+		msg["message_id"] = ToGlobalId(groupCode, int32(m.MessageID))
+		list = append(list, msg)
+	}
+	return OK(list)
+}
+
+func (bot *CQBot) CQCheckUrlSafely(url string) MSG {
+	return OK(MSG{
+		"level": bot.Client.CheckUrlSafely(url),
 	})
 }
 

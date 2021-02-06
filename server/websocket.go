@@ -562,6 +562,9 @@ var wsAPI = map[string]func(*coolq.CQBot, gjson.Result) coolq.MSG{
 	"get_group_file_url": func(bot *coolq.CQBot, p gjson.Result) coolq.MSG {
 		return bot.CQGetGroupFileUrl(p.Get("group_id").Int(), p.Get("file_id").Str, int32(p.Get("busid").Int()))
 	},
+	"upload_group_file": func(bot *coolq.CQBot, p gjson.Result) coolq.MSG {
+		return bot.CQUploadGroupFile(p.Get("group_id").Int(), p.Get("file").Str, p.Get("name").Str, p.Get("folder").Str)
+	},
 	"get_group_msg_history": func(bot *coolq.CQBot, p gjson.Result) coolq.MSG {
 		return bot.CQGetGroupMessageHistory(p.Get("group_id").Int(), p.Get("message_seq").Int())
 	},
@@ -588,6 +591,18 @@ var wsAPI = map[string]func(*coolq.CQBot, gjson.Result) coolq.MSG{
 	},
 	"set_group_portrait": func(bot *coolq.CQBot, p gjson.Result) coolq.MSG {
 		return bot.CQSetGroupPortrait(p.Get("group_id").Int(), p.Get("file").String(), p.Get("cache").String())
+	},
+	"set_essence_msg": func(bot *coolq.CQBot, p gjson.Result) coolq.MSG {
+		return bot.CQSetEssenceMessage(int32(p.Get("message_id").Int()))
+	},
+	"delete_essence_msg": func(bot *coolq.CQBot, p gjson.Result) coolq.MSG {
+		return bot.CQDeleteEssenceMessage(int32(p.Get("message_id").Int()))
+	},
+	"get_essence_msg_list": func(bot *coolq.CQBot, p gjson.Result) coolq.MSG {
+		return bot.CQGetEssenceMessageList(p.Get("group_id").Int())
+	},
+	"check_url_safely": func(bot *coolq.CQBot, p gjson.Result) coolq.MSG {
+		return bot.CQCheckUrlSafely(p.Get("url").String())
 	},
 	"set_group_anonymous_ban": func(bot *coolq.CQBot, p gjson.Result) coolq.MSG {
 		obj := p.Get("anonymous")
