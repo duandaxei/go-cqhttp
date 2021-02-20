@@ -1,8 +1,6 @@
-// +build !arm,!arm64,!amd64,!386
-
 package codec
 
-import "errors"
+import "github.com/pkg/errors"
 
 //EncodeToSilk 将音频编码为Silk
 func EncodeToSilk(record []byte, tempName string, useCache bool) ([]byte, error) {
