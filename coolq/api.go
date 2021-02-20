@@ -249,11 +249,15 @@ func (bot *CQBot) CQGetWordSlices(content string) MSG {
 // https://git.io/Jtz1c
 func (bot *CQBot) CQSendGroupMessage(groupID int64, i interface{}, autoEscape bool) MSG {
 	var str string
+	group := bot.Client.FindGroup(groupID)
+	if group == nil {
+		return Failed(100, "GROUP_NOT_FOUND", "群聊不存在")
+	}
 	fixAt := func(elem []message.IMessageElement) {
 		for _, e := range elem {
 			if at, ok := e.(*message.AtElement); ok && at.Target != 0 {
 				at.Display = "@" + func() string {
-					mem := bot.Client.FindGroup(groupID).FindMember(at.Target)
+					mem := group.FindMember(at.Target)
 					if mem != nil {
 						return mem.DisplayName()
 					}
@@ -510,7 +514,10 @@ func (bot *CQBot) CQSetGroupName(groupID int64, name string) MSG {
 // https://docs.go-cqhttp.org/api/#%E5%8F%91%E9%80%81%E7%BE%A4%E5%85%AC%E5%91%8A
 func (bot *CQBot) CQSetGroupMemo(groupID int64, msg string) MSG {
 	if g := bot.Client.FindGroup(groupID); g != nil {
-		g.UpdateMemo(msg)
+		if g.SelfPermission() == client.Member {
+			return Failed(100, "PERMISSION_DENIED", "权限不足")
+		}
+		_ = bot.Client.AddGroupNoticeSimple(groupID, msg)
 		return OK(nil)
 	}
 	return Failed(100, "GROUP_NOT_FOUND", "群聊不存在")
