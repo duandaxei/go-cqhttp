@@ -61,7 +61,9 @@ func NewQQBot(cli *client.QQClient, conf *global.JSONConfig) *CQBot {
 	}
 	bot.Client.OnPrivateMessage(bot.privateMessageEvent)
 	bot.Client.OnGroupMessage(bot.groupMessageEvent)
-	bot.Client.OnSelfGroupMessage(bot.groupMessageEvent)
+	if conf.EnableSelfMessage {
+		bot.Client.OnSelfGroupMessage(bot.groupMessageEvent)
+	}
 	bot.Client.OnTempMessage(bot.tempMessageEvent)
 	bot.Client.OnGroupMuted(bot.groupMutedEvent)
 	bot.Client.OnGroupMessageRecalled(bot.groupRecallEvent)
@@ -295,7 +297,7 @@ func (bot *CQBot) SendPrivateMessage(target int64, m *message.SendingMessage) in
 	} else if code, ok := bot.tempMsgCache.Load(target); ok { // 临时会话
 		msg := bot.Client.SendTempMessage(code.(int64), target, m)
 		if msg != nil {
-			id = msg.Id
+			id = bot.InsertTempMessage(target, msg)
 		}
 	} else if _, ok := bot.oneWayMsgCache.Load(target); ok { // 单向好友
 		msg := bot.Client.SendPrivateMessage(target, m)
@@ -344,6 +346,33 @@ func (bot *CQBot) InsertPrivateMessage(m *message.PrivateMessage) int32 {
 		"sender":      m.Sender,
 		"time":        m.Time,
 		"message":     ToStringMessage(m.Elements, m.Sender.Uin, true),
+	}
+	id := toGlobalID(m.Sender.Uin, m.Id)
+	if bot.db != nil {
+		buf := new(bytes.Buffer)
+		if err := gob.NewEncoder(buf).Encode(val); err != nil {
+			log.Warnf("记录聊天数据时出现错误: %v", err)
+			return -1
+		}
+		if err := bot.db.Put(binary.ToBytes(id), binary.GZipCompress(buf.Bytes()), nil); err != nil {
+			log.Warnf("记录聊天数据时出现错误: %v", err)
+			return -1
+		}
+	}
+	return id
+}
+
+// InsertTempMessage 临时消息入数据库
+func (bot *CQBot) InsertTempMessage(target int64, m *message.TempMessage) int32 {
+	val := MSG{
+		"message-id": m.Id,
+		// FIXME(InsertTempMessage) InternalId missing
+		"group":      m.GroupCode,
+		"group-name": m.GroupName,
+		"target":     target,
+		"sender":     m.Sender,
+		"time":       time.Now().Unix(),
+		"message":    ToStringMessage(m.Elements, m.Sender.Uin, true),
 	}
 	id := toGlobalID(m.Sender.Uin, m.Id)
 	if bot.db != nil {
@@ -438,12 +467,12 @@ func (bot *CQBot) formatGroupMessage(m *message.GroupMessage) MSG {
 			t, err := bot.Client.GetGroupMembers(group)
 			if err != nil {
 				log.Warnf("刷新群 %v 成员列表失败: %v", group.Uin, err)
-				return Failed(100, "GET_MEMBERS_API_ERROR", err.Error())
+				return nil
 			}
 			group.Members = t
 			mem = group.FindMember(m.Sender.Uin)
-			if mem != nil {
-				return Failed(100, "MEMBER_NOT_FOUND", "群员不存在")
+			if mem == nil {
+				return nil
 			}
 		}
 		ms := gm["sender"].(MSG)
