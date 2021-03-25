@@ -2,10 +2,10 @@ package server
 
 import (
 	"strings"
-	"time"
 
 	"github.com/Mrs4s/go-cqhttp/coolq"
 	"github.com/Mrs4s/go-cqhttp/global"
+
 	"github.com/tidwall/gjson"
 )
 
@@ -191,18 +191,19 @@ func getGroupHonorInfo(bot *coolq.CQBot, p resultGetter) coolq.MSG {
 	return bot.CQGetGroupHonorInfo(p.Get("group_id").Int(), p.Get("type").Str)
 }
 
-func setRestart(_ *coolq.CQBot, p resultGetter) coolq.MSG {
-	var delay int64
-	delay = p.Get("delay").Int()
-	if delay < 0 {
-		delay = 0
-	}
-	defer func(delay int64) {
-		time.Sleep(time.Duration(delay) * time.Millisecond)
-		Restart <- struct{}{}
-	}(delay)
-	return coolq.MSG{"data": nil, "retcode": 0, "status": "async"}
-
+func setRestart(_ *coolq.CQBot, _ resultGetter) coolq.MSG {
+	/*
+		var delay int64
+		delay = p.Get("delay").Int()
+		if delay < 0 {
+			delay = 0
+		}
+		defer func(delay int64) {
+			time.Sleep(time.Duration(delay) * time.Millisecond)
+			Restart <- struct{}{}
+		}(delay)
+	*/
+	return coolq.MSG{"data": nil, "retcode": 99, "msg": "restart un-supported now", "wording": "restart函数暂不兼容", "status": "failed"}
 }
 
 func canSendImage(bot *coolq.CQBot, _ resultGetter) coolq.MSG {
@@ -293,7 +294,7 @@ func getEssenceMsgList(bot *coolq.CQBot, p resultGetter) coolq.MSG {
 	return bot.CQGetEssenceMessageList(p.Get("group_id").Int())
 }
 
-func checkUrlSafely(bot *coolq.CQBot, p resultGetter) coolq.MSG {
+func checkURLSafely(bot *coolq.CQBot, p resultGetter) coolq.MSG {
 	return bot.CQCheckURLSafely(p.Get("url").String())
 }
 
@@ -368,7 +369,7 @@ var API = map[string]func(*coolq.CQBot, resultGetter) coolq.MSG{
 	"set_essence_msg":            setEssenceMSG,
 	"delete_essence_msg":         deleteEssenceMSG,
 	"get_essence_msg_list":       getEssenceMsgList,
-	"check_url_safely":           checkUrlSafely,
+	"check_url_safely":           checkURLSafely,
 	"set_group_anonymous_ban":    setGroupAnonymousBan,
 	".handle_quick_operation":    handleQuickOperation,
 }
@@ -376,7 +377,6 @@ var API = map[string]func(*coolq.CQBot, resultGetter) coolq.MSG{
 func (api *apiCaller) callAPI(action string, p resultGetter) coolq.MSG {
 	if f, ok := API[action]; ok {
 		return f(api.bot, p)
-	} else {
-		return coolq.Failed(404, "API_NOT_FOUND", "API不存在")
 	}
+	return coolq.Failed(404, "API_NOT_FOUND", "API不存在")
 }

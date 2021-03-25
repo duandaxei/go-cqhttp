@@ -25,9 +25,10 @@ import (
 	"github.com/Mrs4s/MiraiGo/binary"
 	"github.com/Mrs4s/MiraiGo/message"
 	"github.com/Mrs4s/MiraiGo/utils"
-	"github.com/Mrs4s/go-cqhttp/global"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
+
+	"github.com/Mrs4s/go-cqhttp/global"
 )
 
 /*
@@ -127,7 +128,7 @@ func (e *PokeElement) Type() message.ElementType {
 
 // ToArrayMessage 将消息元素数组转为MSG数组以用于消息上报
 func ToArrayMessage(e []message.IMessageElement, id int64, isRaw ...bool) (r []MSG) {
-	r = []MSG{}
+	r = make([]MSG, 0, len(e))
 	ur := false
 	if len(isRaw) != 0 {
 		ur = isRaw[0]
@@ -867,7 +868,7 @@ func (bot *CQBot) ToElement(t string, d map[string]string, isGroup bool) (m inte
 		if !bytes.Equal(header, []byte{0x66, 0x74, 0x79, 0x70}) { // check file header ftyp
 			_, _ = video.Seek(0, io.SeekStart)
 			hash, _ := utils.ComputeMd5AndLength(video)
-			cacheFile := path.Join(global.CachePath, hex.EncodeToString(hash[:])+".mp4")
+			cacheFile := path.Join(global.CachePath, hex.EncodeToString(hash)+".mp4")
 			if global.PathExists(cacheFile) && cache == "1" {
 				goto ok
 			}

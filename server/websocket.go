@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/Mrs4s/go-cqhttp/coolq"
 	"github.com/Mrs4s/go-cqhttp/global"
+
+	"github.com/Mrs4s/MiraiGo/utils"
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
@@ -97,7 +100,7 @@ func (c *WebSocketClient) connectAPI() {
 	if c.token != "" {
 		header["Authorization"] = []string{"Token " + c.token}
 	}
-	conn, _, err := websocket.DefaultDialer.Dial(c.conf.ReverseAPIURL, header)
+	conn, _, err := websocket.DefaultDialer.Dial(c.conf.ReverseAPIURL, header) // nolint
 	if err != nil {
 		log.Warnf("连接到反向WebSocket API服务器 %v 时出现错误: %v", c.conf.ReverseAPIURL, err)
 		if c.conf.ReverseReconnectInterval != 0 {
@@ -121,7 +124,7 @@ func (c *WebSocketClient) connectEvent() {
 	if c.token != "" {
 		header["Authorization"] = []string{"Token " + c.token}
 	}
-	conn, _, err := websocket.DefaultDialer.Dial(c.conf.ReverseEventURL, header)
+	conn, _, err := websocket.DefaultDialer.Dial(c.conf.ReverseEventURL, header) // nolint
 	if err != nil {
 		log.Warnf("连接到反向WebSocket Event服务器 %v 时出现错误: %v", c.conf.ReverseEventURL, err)
 		if c.conf.ReverseReconnectInterval != 0 {
@@ -152,7 +155,7 @@ func (c *WebSocketClient) connectUniversal() {
 	if c.token != "" {
 		header["Authorization"] = []string{"Token " + c.token}
 	}
-	conn, _, err := websocket.DefaultDialer.Dial(c.conf.ReverseURL, header)
+	conn, _, err := websocket.DefaultDialer.Dial(c.conf.ReverseURL, header) // nolint
 	if err != nil {
 		log.Warnf("连接到反向WebSocket Universal服务器 %v 时出现错误: %v", c.conf.ReverseURL, err)
 		if c.conf.ReverseReconnectInterval != 0 {
@@ -161,7 +164,6 @@ func (c *WebSocketClient) connectUniversal() {
 		}
 		return
 	}
-
 	handshake := fmt.Sprintf(`{"meta_event_type":"lifecycle","post_type":"meta_event","self_id":%d,"sub_type":"connect","time":%d}`,
 		c.bot.Client.Uin, time.Now().Unix())
 	err = conn.WriteMessage(websocket.TextMessage, []byte(handshake))
@@ -175,16 +177,27 @@ func (c *WebSocketClient) connectUniversal() {
 }
 
 func (c *WebSocketClient) listenAPI(conn *webSocketConn, u bool) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	for {
-		_, buf, err := conn.ReadMessage()
+		buffer := global.NewBuffer()
+		t, reader, err := conn.NextReader()
 		if err != nil {
 			log.Warnf("监听反向WS API时出现错误: %v", err)
 			break
 		}
-
-		go conn.handleRequest(c.bot, buf)
-
+		_, err = buffer.ReadFrom(reader)
+		if err != nil {
+			log.Warnf("监听反向WS API时出现错误: %v", err)
+			break
+		}
+		if t == websocket.TextMessage {
+			go func(buffer *bytes.Buffer) {
+				defer global.PutBuffer(buffer)
+				conn.handleRequest(c.bot, buffer.Bytes())
+			}(buffer)
+		} else {
+			global.PutBuffer(buffer)
+		}
 	}
 	if c.conf.ReverseReconnectInterval != 0 {
 		time.Sleep(time.Millisecond * time.Duration(c.conf.ReverseReconnectInterval))
@@ -194,14 +207,14 @@ func (c *WebSocketClient) listenAPI(conn *webSocketConn, u bool) {
 	}
 }
 
-func (c *WebSocketClient) onBotPushEvent(m coolq.MSG) {
+func (c *WebSocketClient) onBotPushEvent(m *bytes.Buffer) {
 	if c.eventConn != nil {
-		log.Debugf("向WS服务器 %v 推送Event: %v", c.eventConn.RemoteAddr().String(), m.ToJSON())
+		log.Debugf("向WS服务器 %v 推送Event: %v", c.eventConn.RemoteAddr().String(), utils.B2S(m.Bytes()))
 		conn := c.eventConn
 		conn.Lock()
 		defer conn.Unlock()
 		_ = c.eventConn.SetWriteDeadline(time.Now().Add(time.Second * 15))
-		if err := c.eventConn.WriteJSON(m); err != nil {
+		if err := c.eventConn.WriteMessage(websocket.TextMessage, m.Bytes()); err != nil {
 			log.Warnf("向WS服务器 %v 推送Event时出现错误: %v", c.eventConn.RemoteAddr().String(), err)
 			_ = c.eventConn.Close()
 			if c.conf.ReverseReconnectInterval != 0 {
@@ -211,12 +224,12 @@ func (c *WebSocketClient) onBotPushEvent(m coolq.MSG) {
 		}
 	}
 	if c.universalConn != nil {
-		log.Debugf("向WS服务器 %v 推送Event: %v", c.universalConn.RemoteAddr().String(), m.ToJSON())
+		log.Debugf("向WS服务器 %v 推送Event: %v", c.universalConn.RemoteAddr().String(), utils.B2S(m.Bytes()))
 		conn := c.universalConn
 		conn.Lock()
 		defer conn.Unlock()
 		_ = c.universalConn.SetWriteDeadline(time.Now().Add(time.Second * 15))
-		if err := c.universalConn.WriteJSON(m); err != nil {
+		if err := c.universalConn.WriteMessage(websocket.TextMessage, m.Bytes()); err != nil {
 			log.Warnf("向WS服务器 %v 推送Event时出现错误: %v", c.universalConn.RemoteAddr().String(), err)
 			_ = c.universalConn.Close()
 			if c.conf.ReverseReconnectInterval != 0 {
@@ -245,7 +258,7 @@ func (s *webSocketServer) event(w http.ResponseWriter, r *http.Request) {
 	err = c.WriteMessage(websocket.TextMessage, []byte(s.handshake))
 	if err != nil {
 		log.Warnf("WebSocket 握手时出现错误: %v", err)
-		c.Close()
+		_ = c.Close()
 		return
 	}
 
@@ -296,25 +309,37 @@ func (s *webSocketServer) any(w http.ResponseWriter, r *http.Request) {
 	err = c.WriteMessage(websocket.TextMessage, []byte(s.handshake))
 	if err != nil {
 		log.Warnf("WebSocket 握手时出现错误: %v", err)
-		c.Close()
+		_ = c.Close()
 		return
 	}
 	log.Infof("接受 WebSocket 连接: %v (/)", r.RemoteAddr)
 	conn := &webSocketConn{Conn: c, apiCaller: apiCaller{s.bot}}
+	s.eventConnMutex.Lock()
 	s.eventConn = append(s.eventConn, conn)
+	s.eventConnMutex.Unlock()
 	s.listenAPI(conn)
 }
 
 func (s *webSocketServer) listenAPI(c *webSocketConn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	for {
-		t, payload, err := c.ReadMessage()
+		buffer := global.NewBuffer()
+		t, reader, err := c.NextReader()
+		if err != nil {
+			break
+		}
+		_, err = buffer.ReadFrom(reader)
 		if err != nil {
 			break
 		}
 
 		if t == websocket.TextMessage {
-			go c.handleRequest(s.bot, payload)
+			go func(buffer *bytes.Buffer) {
+				defer global.PutBuffer(buffer)
+				c.handleRequest(s.bot, buffer.Bytes())
+			}(buffer)
+		} else {
+			global.PutBuffer(buffer)
 		}
 	}
 }
@@ -323,7 +348,7 @@ func (c *webSocketConn) handleRequest(_ *coolq.CQBot, payload []byte) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Printf("处置WS命令时发生无法恢复的异常：%v\n%s", err, debug.Stack())
-			c.Close()
+			_ = c.Close()
 		}
 	}()
 	global.RateLimit(context.Background())
@@ -339,14 +364,14 @@ func (c *webSocketConn) handleRequest(_ *coolq.CQBot, payload []byte) {
 	_ = c.WriteJSON(ret)
 }
 
-func (s *webSocketServer) onBotPushEvent(m coolq.MSG) {
+func (s *webSocketServer) onBotPushEvent(m *bytes.Buffer) {
 	s.eventConnMutex.Lock()
 	defer s.eventConnMutex.Unlock()
 	for i, l := 0, len(s.eventConn); i < l; i++ {
 		conn := s.eventConn[i]
-		log.Debugf("向WS客户端 %v 推送Event: %v", conn.RemoteAddr().String(), m.ToJSON())
+		log.Debugf("向WS客户端 %v 推送Event: %v", conn.RemoteAddr().String(), utils.B2S(m.Bytes()))
 		conn.Lock()
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(m.ToJSON())); err != nil {
+		if err := conn.WriteMessage(websocket.TextMessage, m.Bytes()); err != nil {
 			_ = conn.Close()
 			next := i + 1
 			if next >= l {

@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Mrs4s/go-cqhttp/global"
+
 	"github.com/Mrs4s/MiraiGo/binary"
 	"github.com/Mrs4s/MiraiGo/client"
 	"github.com/Mrs4s/MiraiGo/message"
-	"github.com/Mrs4s/go-cqhttp/global"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -49,6 +50,7 @@ func (bot *CQBot) privateMessageEvent(c *client.QQClient, m *message.PrivateMess
 		"sub_type":     "friend",
 		"message_id":   id,
 		"user_id":      m.Sender.Uin,
+		"target_id":    m.Target,
 		"message":      ToFormattedMessage(m.Elements, m.Sender.Uin, false),
 		"raw_message":  cqm,
 		"font":         0,
@@ -238,6 +240,10 @@ func (bot *CQBot) groupNotifyEvent(c *client.QQClient, e client.INotifyEvent) {
 					return "performer"
 				case client.Emotion:
 					return "emotion"
+				case client.Legend:
+					return "legend"
+				case client.StrongNewbie:
+					return "strong_newbie"
 				default:
 					return "ERROR"
 				}
@@ -248,8 +254,7 @@ func (bot *CQBot) groupNotifyEvent(c *client.QQClient, e client.INotifyEvent) {
 
 func (bot *CQBot) friendNotifyEvent(c *client.QQClient, e client.INotifyEvent) {
 	friend := c.FindFriend(e.From())
-	switch notify := e.(type) {
-	case *client.FriendPokeNotifyEvent:
+	if notify, ok := e.(*client.FriendPokeNotifyEvent); ok {
 		log.Infof("好友 %v 戳了戳你.", friend.Nickname)
 		bot.dispatchEventMessage(MSG{
 			"post_type":   "notice",

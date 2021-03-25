@@ -2,6 +2,7 @@ package global
 
 import (
 	"os"
+	"path"
 	"strconv"
 	"time"
 
@@ -11,6 +12,9 @@ import (
 )
 
 var json = jsoniter.ConfigCompatibleWithStandardLibrary
+
+var currentPath = getCurrentPath()
+var DefaultConfFile = path.Join(currentPath, "config.hjson")
 
 // DefaultConfigWithComments 为go-cqhttp的默认配置文件
 var DefaultConfigWithComments = `
@@ -312,3 +316,35 @@ func (c *JSONConfig) Save(path string) error {
 	}
 	return WriteAllText(path, string(data))
 }
+
+// getCurrentPath 获取当前文件的路径，直接返回string
+func getCurrentPath() string {
+	cwd, e := os.Getwd()
+	if e != nil {
+		panic(e)
+	}
+	return cwd
+}
+
+/*
+// GetCurrentPath 预留,获取当前目录地址
+func GetCurrentPath() (string, error) {
+	file, err := exec.LookPath(os.Args[0])
+	if err != nil {
+		return "", err
+	}
+	fpath, err := filepath.Abs(file)
+	if err != nil {
+		return "", err
+	}
+	if runtime.GOOS == "windows" {
+		// fpath = strings.Replace(fpath, "\\", "/", -1)
+		fpath = strings.ReplaceAll(fpath, "\\", "/")
+	}
+	i := strings.LastIndex(fpath, "/")
+	if i < 0 {
+		return "", errors.New("system/path_error,Can't find '/' or '\\'")
+	}
+	return fpath[0 : i+1], nil
+}
+*/
