@@ -10,21 +10,34 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Mrs4s/go-cqhttp/global"
 
 	"github.com/Mrs4s/MiraiGo/binary"
 	"github.com/Mrs4s/MiraiGo/client"
 	"github.com/Mrs4s/MiraiGo/message"
+	"github.com/Mrs4s/MiraiGo/utils"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 )
 
 // Version go-cqhttp的版本信息，在编译时使用ldflags进行覆盖
 var Version = "unknown"
+
+func init() {
+	if Version != "unknown" {
+		return
+	}
+	info, ok := debug.ReadBuildInfo()
+	if ok {
+		Version = info.Main.Version
+	}
+}
 
 // CQGetLoginInfo 获取登录号信息
 //
@@ -131,12 +144,22 @@ func (bot *CQBot) CQGetGroupMemberList(groupID int64, noCache bool) MSG {
 // CQGetGroupMemberInfo 获取群成员信息
 //
 // https://git.io/Jtz1s
-func (bot *CQBot) CQGetGroupMemberInfo(groupID, userID int64) MSG {
+func (bot *CQBot) CQGetGroupMemberInfo(groupID, userID int64, noCache bool) MSG {
 	group := bot.Client.FindGroup(groupID)
 	if group == nil {
 		return Failed(100, "GROUP_NOT_FOUND", "群聊不存在")
 	}
-	member := group.FindMember(userID)
+	var member *client.GroupMemberInfo
+	if noCache {
+		var err error
+		member, err = bot.Client.GetMemberInfo(groupID, userID)
+		if err != nil {
+			log.Warnf("刷新群 %v 中成员 %v 失败: %v", groupID, userID, err)
+			return Failed(100, "GET_MEMBER_INFO_API_ERROR", err.Error())
+		}
+	} else {
+		member = group.FindMember(userID)
+	}
 	if member == nil {
 		return Failed(100, "MEMBER_NOT_FOUND", "群员不存在")
 	}
@@ -1357,10 +1380,15 @@ func convertGroupMemberInfo(groupID int64, m *client.GroupMemberInfo) MSG {
 }
 
 func limitedString(str string) string {
-	if strings.Count(str, "") <= 10 {
+	if utf8.RuneCountInString(str) <= 10 {
 		return str
 	}
-	limited := []rune(str)
-	limited = limited[:10]
+	b := utils.S2B(str)
+	limited := make([]rune, 0, 10)
+	for i := 0; i < 10; i++ {
+		decodeRune, size := utf8.DecodeRune(b)
+		b = b[size:]
+		limited = append(limited, decodeRune)
+	}
 	return string(limited) + " ..."
 }
