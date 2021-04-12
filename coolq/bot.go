@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Mrs4s/go-cqhttp/global"
+	"github.com/Mrs4s/go-cqhttp/global/config"
 
 	"github.com/Mrs4s/MiraiGo/binary"
 	"github.com/Mrs4s/MiraiGo/client"
@@ -30,11 +31,11 @@ var json = jsoniter.ConfigCompatibleWithStandardLibrary
 type CQBot struct {
 	Client *client.QQClient
 
-	events         []func(*bytes.Buffer)
-	db             *leveldb.DB
-	friendReqCache sync.Map
-	tempMsgCache   sync.Map
-	oneWayMsgCache sync.Map
+	events           []func(*bytes.Buffer)
+	db               *leveldb.DB
+	friendReqCache   sync.Map
+	tempSessionCache sync.Map
+	oneWayMsgCache   sync.Map
 }
 
 // MSG 消息Map
@@ -44,11 +45,18 @@ type MSG map[string]interface{}
 var ForceFragmented = false
 
 // NewQQBot 初始化一个QQBot实例
-func NewQQBot(cli *client.QQClient, conf *global.JSONConfig) *CQBot {
+func NewQQBot(cli *client.QQClient, conf *config.Config) *CQBot {
 	bot := &CQBot{
 		Client: cli,
 	}
-	if conf.EnableDB {
+	enableLevelDB := false
+	node, ok := conf.Database["leveldb"]
+	if ok {
+		lconf := new(config.LevelDBConfig)
+		_ = node.Decode(lconf)
+		enableLevelDB = lconf.Enable
+	}
+	if enableLevelDB {
 		p := path.Join("data", "leveldb")
 		db, err := leveldb.OpenFile(p, nil)
 		if err != nil {
@@ -62,7 +70,7 @@ func NewQQBot(cli *client.QQClient, conf *global.JSONConfig) *CQBot {
 	}
 	bot.Client.OnPrivateMessage(bot.privateMessageEvent)
 	bot.Client.OnGroupMessage(bot.groupMessageEvent)
-	if conf.EnableSelfMessage {
+	if conf.Message.ReportSelfMessage {
 		bot.Client.OnSelfPrivateMessage(bot.privateMessageEvent)
 		bot.Client.OnSelfGroupMessage(bot.groupMessageEvent)
 	}
@@ -86,16 +94,17 @@ func NewQQBot(cli *client.QQClient, conf *global.JSONConfig) *CQBot {
 	bot.Client.OnOtherClientStatusChanged(bot.otherClientStatusChangedEvent)
 	bot.Client.OnGroupDigest(bot.groupEssenceMsg)
 	go func() {
-		i := conf.HeartbeatInterval
-		if i < 0 {
+		i := conf.Heartbeat.Interval
+		if i < 0 || conf.Heartbeat.Disabled {
 			log.Warn("警告: 心跳功能已关闭，若非预期，请检查配置文件。")
 			return
 		}
 		if i == 0 {
 			i = 5
 		}
+		t := time.NewTicker(time.Second * time.Duration(i))
 		for {
-			time.Sleep(time.Second * i)
+			<-t.C
 			bot.dispatchEventMessage(MSG{
 				"time":            time.Now().Unix(),
 				"self_id":         bot.Client.Uin,
@@ -174,7 +183,7 @@ func (bot *CQBot) UploadLocalImageAsPrivate(userID int64, img *LocalImageElement
 
 // SendGroupMessage 发送群消息
 func (bot *CQBot) SendGroupMessage(groupID int64, m *message.SendingMessage) int32 {
-	var newElem = make([]message.IMessageElement, 0, len(m.Elements))
+	newElem := make([]message.IMessageElement, 0, len(m.Elements))
 	group := bot.Client.FindGroup(groupID)
 	for _, elem := range m.Elements {
 		if i, ok := elem.(*LocalImageElement); ok {
@@ -246,7 +255,7 @@ func (bot *CQBot) SendGroupMessage(groupID int64, m *message.SendingMessage) int
 
 // SendPrivateMessage 发送私聊消息
 func (bot *CQBot) SendPrivateMessage(target int64, groupID int64, m *message.SendingMessage) int32 {
-	var newElem = make([]message.IMessageElement, 0, len(m.Elements))
+	newElem := make([]message.IMessageElement, 0, len(m.Elements))
 	for _, elem := range m.Elements {
 		if i, ok := elem.(*LocalImageElement); ok {
 			fm, err := bot.UploadLocalImageAsPrivate(target, i)
@@ -297,22 +306,27 @@ func (bot *CQBot) SendPrivateMessage(target int64, groupID int64, m *message.Sen
 		if msg != nil {
 			id = bot.InsertPrivateMessage(msg)
 		}
-	} else if code, ok := bot.tempMsgCache.Load(target); ok || groupID != 0 { // 临时会话
+	} else if session, ok := bot.tempSessionCache.Load(target); ok || groupID != 0 { // 临时会话
 		switch {
-		case bot.Client.FindGroup(groupID) == nil:
+		case groupID != 0 && bot.Client.FindGroup(groupID) == nil:
 			log.Errorf("错误: 找不到群(%v)", groupID)
-			id = -1
 		case groupID != 0 && !bot.Client.FindGroup(groupID).AdministratorOrOwner():
 			log.Errorf("错误: 机器人在群(%v) 为非管理员或群主, 无法主动发起临时会话", groupID)
-			id = -1
 		case groupID != 0 && bot.Client.FindGroup(groupID).FindMember(target) == nil:
 			log.Errorf("错误: 群员(%v) 不在 群(%v), 无法发起临时会话", target, groupID)
-			id = -1
 		default:
-			if code != nil {
-				groupID = code.(int64)
+			if session == nil && groupID != 0 {
+				msg := bot.Client.SendGroupTempMessage(groupID, target, m)
+				if msg != nil {
+					id = bot.InsertTempMessage(target, msg)
+				}
+				break
 			}
-			msg := bot.Client.SendTempMessage(groupID, target, m)
+			msg, err := session.(*client.TempSessionInfo).SendMessage(m)
+			if err != nil {
+				log.Errorf("发送临时会话消息失败: %v", err)
+				break
+			}
 			if msg != nil {
 				id = bot.InsertTempMessage(target, msg)
 			}
@@ -429,10 +443,6 @@ func (bot *CQBot) Release() {
 }
 
 func (bot *CQBot) dispatchEventMessage(m MSG) {
-	if global.EventFilter != nil && !global.EventFilter.Eval(global.MSG(m)) {
-		log.Debug("Event filtered!")
-		return
-	}
 	buf := global.NewBuffer()
 	wg := sync.WaitGroup{}
 	wg.Add(len(bot.events))
@@ -445,6 +455,7 @@ func (bot *CQBot) dispatchEventMessage(m MSG) {
 					log.Warnf("处理事件 %v 时出现错误: %v \n%s", m, pan, debug.Stack())
 				}
 			}()
+
 			start := time.Now()
 			fn(buf)
 			end := time.Now()

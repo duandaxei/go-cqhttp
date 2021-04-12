@@ -13,8 +13,11 @@ type resultGetter interface {
 	Get(string) gjson.Result
 }
 
+type handler func(action string, p resultGetter) coolq.MSG
+
 type apiCaller struct {
-	bot *coolq.CQBot
+	bot      *coolq.CQBot
+	handlers []handler
 }
 
 func getLoginInfo(bot *coolq.CQBot, _ resultGetter) coolq.MSG {
@@ -42,6 +45,7 @@ func getGroupMemberInfo(bot *coolq.CQBot, p resultGetter) coolq.MSG {
 		p.Get("group_id").Int(), p.Get("user_id").Int(), p.Get("no_cache").Bool(),
 	)
 }
+
 func sendMSG(bot *coolq.CQBot, p resultGetter) coolq.MSG {
 	autoEscape := global.EnsureBool(p.Get("auto_escape"), false)
 	if p.Get("message_type").Str == "private" {
@@ -258,8 +262,9 @@ func getVipInfo(bot *coolq.CQBot, p resultGetter) coolq.MSG {
 	return bot.CQGetVipInfo(p.Get("user_id").Int())
 }
 
-func reloadEventFilter(bot *coolq.CQBot, _ resultGetter) coolq.MSG {
-	return bot.CQReloadEventFilter()
+func reloadEventFilter(_ *coolq.CQBot, p resultGetter) coolq.MSG {
+	addFilter(p.Get("file").String())
+	return coolq.OK(nil)
 }
 
 func getGroupAtAllRemain(bot *coolq.CQBot, p resultGetter) coolq.MSG {
@@ -317,6 +322,7 @@ func handleQuickOperation(bot *coolq.CQBot, p resultGetter) coolq.MSG {
 	return bot.CQHandleQuickOperation(p.Get("context"), p.Get("operation"))
 }
 
+// API 是go-cqhttp当前支持的所有api的映射表
 var API = map[string]func(*coolq.CQBot, resultGetter) coolq.MSG{
 	"get_login_info":             getLoginInfo,
 	"get_friend_list":            getFriendList,
@@ -375,8 +381,24 @@ var API = map[string]func(*coolq.CQBot, resultGetter) coolq.MSG{
 }
 
 func (api *apiCaller) callAPI(action string, p resultGetter) coolq.MSG {
+	for _, fn := range api.handlers {
+		if ret := fn(action, p); ret != nil {
+			return ret
+		}
+	}
 	if f, ok := API[action]; ok {
 		return f(api.bot, p)
 	}
 	return coolq.Failed(404, "API_NOT_FOUND", "API不存在")
+}
+
+func (api *apiCaller) use(middlewares ...handler) {
+	api.handlers = append(api.handlers, middlewares...)
+}
+
+func newAPICaller(bot *coolq.CQBot) *apiCaller {
+	return &apiCaller{
+		bot:      bot,
+		handlers: []handler{},
+	}
 }
