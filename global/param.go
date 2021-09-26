@@ -2,26 +2,20 @@ package global
 
 import (
 	"math"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/Mrs4s/MiraiGo/utils"
+	"github.com/segmentio/asm/base64"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 )
 
-var trueSet = map[string]struct{}{
-	"true": {},
-	"yes":  {},
-	"1":    {},
-}
-
-var falseSet = map[string]struct{}{
-	"false": {},
-	"no":    {},
-	"0":     {},
-}
+// MSG 消息Map
+type MSG map[string]interface{}
 
 // EnsureBool 判断给定的p是否可表示为合法Bool类型,否则返回defaultVal
 //
@@ -41,27 +35,28 @@ func EnsureBool(p interface{}, defaultVal bool) bool {
 		if !j.Exists() {
 			return defaultVal
 		}
-		if j.Type == gjson.True {
+		switch j.Type { // nolint
+		case gjson.True:
 			return true
-		}
-		if j.Type == gjson.False {
+		case gjson.False:
 			return false
-		}
-		if j.Type != gjson.String {
+		case gjson.String:
+			str = j.Str
+		default:
 			return defaultVal
 		}
-		str = j.Str
 	} else if s, ok := p.(string); ok {
 		str = s
 	}
 	str = strings.ToLower(str)
-	if _, ok := trueSet[str]; ok {
+	switch str {
+	case "true", "yes", "1":
 		return true
-	}
-	if _, ok := falseSet[str]; ok {
+	case "false", "no", "0":
 		return false
+	default:
+		return defaultVal
 	}
-	return defaultVal
 }
 
 // VersionNameCompare 检查版本名是否需要更新, 仅适用于 go-cqhttp 的版本命名规则
@@ -99,6 +94,40 @@ func VersionNameCompare(current, remote string) bool {
 	return cur[4] < re[4]
 }
 
+// SetAtDefault 在变量 variable 为默认值 defaultValue 的时候修改为 value
+func SetAtDefault(variable, value, defaultValue interface{}) {
+	v := reflect.ValueOf(variable)
+	v2 := reflect.ValueOf(value)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return
+	}
+	v = v.Elem()
+	if v.Interface() != defaultValue {
+		return
+	}
+	if v.Kind() != v2.Kind() {
+		return
+	}
+	v.Set(v2)
+}
+
+// SetExcludeDefault 在目标值 value 不为默认值 defaultValue 时修改 variable 为 value
+func SetExcludeDefault(variable, value, defaultValue interface{}) {
+	v := reflect.ValueOf(variable)
+	v2 := reflect.ValueOf(value)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		return
+	}
+	v = v.Elem()
+	if reflect.Indirect(v2).Interface() != defaultValue {
+		return
+	}
+	if v.Kind() != v2.Kind() {
+		return
+	}
+	v.Set(v2)
+}
+
 var (
 	// once lazy compile the reg
 	once sync.Once
@@ -127,4 +156,14 @@ func SplitURL(s string) []string {
 	}
 	result = append(result, s[last:])
 	return result
+}
+
+// Base64DecodeString decode base64 with avx2
+// see https://github.com/segmentio/asm/issues/50
+// avoid incorrect unsafe usage in origin library
+func Base64DecodeString(s string) ([]byte, error) {
+	e := base64.StdEncoding
+	dst := make([]byte, e.DecodedLen(len(s)))
+	n, err := e.Decode(dst, utils.S2B(s))
+	return dst[:n], err
 }
