@@ -45,6 +45,13 @@ func (c *Caller) call(action string, p Getter) global.MSG {
 		p1 := p.Get("parent_id").String()
 		p2 := p.Get("name").String()
 		return c.bot.CQGroupFileCreateFolder(p0, p1, p2)
+	case "create_guild_role":
+		p0 := p.Get("guild_id").Uint()
+		p1 := p.Get("name").String()
+		p2 := uint32(p.Get("color").Int())
+		p3 := p.Get("independent").Bool()
+		p4 := p.Get("initial_users")
+		return c.bot.CQCreateGuildRole(p0, p1, p2, p3, p4)
 	case "delete_essence_msg":
 		p0 := int32(p.Get("message_id").Int())
 		return c.bot.CQDeleteEssenceMessage(p0)
@@ -60,6 +67,10 @@ func (c *Caller) call(action string, p Getter) global.MSG {
 		p0 := p.Get("group_id").Int()
 		p1 := p.Get("folder_id").String()
 		return c.bot.CQGroupFileDeleteFolder(p0, p1)
+	case "delete_guild_role":
+		p0 := p.Get("guild_id").Uint()
+		p1 := p.Get("role_id").Uint()
+		return c.bot.CQDeleteGuildRole(p0, p1)
 	case "delete_msg":
 		p0 := int32(p.Get("message_id").Int())
 		return c.bot.CQDeleteMessage(p0)
@@ -129,12 +140,12 @@ func (c *Caller) call(action string, p Getter) global.MSG {
 		return c.bot.CQGetGuildChannelList(p0, p1)
 	case "get_guild_list":
 		return c.bot.CQGetGuildList()
-	case "get_guild_members":
-		p0 := p.Get("guild_id").Uint()
-		return c.bot.CQGetGuildMembers(p0)
 	case "get_guild_meta_by_guest":
 		p0 := p.Get("guild_id").Uint()
 		return c.bot.CQGetGuildMetaByGuest(p0)
+	case "get_guild_roles":
+		p0 := p.Get("guild_id").Uint()
+		return c.bot.CQGetGuildRoles(p0)
 	case "get_guild_service_profile":
 		return c.bot.CQGetGuildServiceProfile()
 	case "get_image":
@@ -153,6 +164,10 @@ func (c *Caller) call(action string, p Getter) global.MSG {
 	case "get_stranger_info":
 		p0 := p.Get("user_id").Int()
 		return c.bot.CQGetStrangerInfo(p0)
+	case "get_topic_channel_feeds":
+		p0 := p.Get("guild_id").Uint()
+		p1 := p.Get("channel_id").Uint()
+		return c.bot.CQGetTopicChannelFeeds(p0, p1)
 	case "get_unidirectional_friend_list":
 		return c.bot.CQGetUnidirectionalFriendList()
 	case "get_version_info":
@@ -262,7 +277,7 @@ func (c *Caller) call(action string, p Getter) global.MSG {
 	case "set_group_special_title":
 		p0 := p.Get("group_id").Int()
 		p1 := p.Get("user_id").Int()
-		p2 := p.Get("title").String()
+		p2 := p.Get("special_title").String()
 		return c.bot.CQSetGroupSpecialTitle(p0, p1, p2)
 	case "set_group_whole_ban":
 		p0 := p.Get("group_id").Int()
@@ -271,6 +286,19 @@ func (c *Caller) call(action string, p Getter) global.MSG {
 			p1 = pt.Bool()
 		}
 		return c.bot.CQSetGroupWholeBan(p0, p1)
+	case "set_guild_member_role":
+		p0 := p.Get("guild_id").Uint()
+		p1 := p.Get("set").Bool()
+		p2 := p.Get("role_id").Uint()
+		p3 := p.Get("users")
+		return c.bot.CQSetGuildMemberRole(p0, p1, p2, p3)
+	case "update_guild_role":
+		p0 := p.Get("guild_id").Uint()
+		p1 := p.Get("role_id").Uint()
+		p2 := p.Get("name").String()
+		p3 := uint32(p.Get("color").Int())
+		p4 := p.Get("indepedent").Bool()
+		return c.bot.CQModifyRoleInGuild(p0, p1, p2, p3, p4)
 	case "upload_group_file":
 		p0 := p.Get("group_id").Int()
 		p1 := p.Get("file").String()

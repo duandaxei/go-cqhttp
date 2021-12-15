@@ -41,12 +41,6 @@ type PokeElement struct {
 	Target int64
 }
 
-// GiftElement 礼物
-type GiftElement struct {
-	Target int64
-	GiftID message.GroupGift
-}
-
 // LocalImageElement 本地图片
 type LocalImageElement struct {
 	Stream io.ReadSeeker
@@ -80,13 +74,16 @@ type MessageSource struct {
 // MessageSourceType 消息来源类型
 type MessageSourceType int32
 
+// MessageSourceType 常量
 const (
-	maxImageSize = 1024 * 1024 * 30  // 30MB
-	maxVideoSize = 1024 * 1024 * 100 // 100MB
-
 	MessageSourcePrivate      MessageSourceType = 0
 	MessageSourceGroup        MessageSourceType = 1
 	MessageSourceGuildChannel MessageSourceType = 2
+)
+
+const (
+	maxImageSize = 1024 * 1024 * 30  // 30MB
+	maxVideoSize = 1024 * 1024 * 100 // 100MB
 )
 
 // Type implements the message.IMessageElement.
@@ -94,33 +91,9 @@ func (e *LocalImageElement) Type() message.ElementType {
 	return message.Image
 }
 
-// Type 获取元素类型ID
-func (e *GiftElement) Type() message.ElementType {
-	// Make message.IMessageElement Happy
-	return message.At
-}
-
 // Type impl message.IMessageElement
 func (e *LocalVideoElement) Type() message.ElementType {
 	return message.Video
-}
-
-// GiftID 礼物ID数组
-var GiftID = [...]message.GroupGift{
-	message.SweetWink,
-	message.HappyCola,
-	message.LuckyBracelet,
-	message.Cappuccino,
-	message.CatWatch,
-	message.FleeceGloves,
-	message.RainbowCandy,
-	message.Stronger,
-	message.LoveMicrophone,
-	message.HoldingYourHand,
-	message.CuteCat,
-	message.MysteryMask,
-	message.ImBusy,
-	message.LoveMask,
 }
 
 // Type 获取元素类型ID
@@ -193,7 +166,7 @@ func ToArrayMessage(e []message.IMessageElement, source MessageSource) (r []glob
 			} else {
 				m = global.MSG{
 					"type": "at",
-					"data": map[string]string{"qq": strconv.FormatInt(o.Target, 10)},
+					"data": map[string]string{"qq": strconv.FormatUint(uint64(o.Target), 10)},
 				}
 			}
 		case *message.RedBagElement:
@@ -234,6 +207,12 @@ func ToArrayMessage(e []message.IMessageElement, source MessageSource) (r []glob
 				"type": "image",
 				"data": data,
 			}
+		case *message.GuildImageElement:
+			data := map[string]string{"file": hex.EncodeToString(o.Md5) + ".image", "url": o.Url}
+			m = global.MSG{
+				"type": "image",
+				"data": data,
+			}
 		case *message.FriendImageElement:
 			data := map[string]string{"file": hex.EncodeToString(o.Md5) + ".image", "url": o.Url}
 			if o.Flash {
@@ -264,6 +243,11 @@ func ToArrayMessage(e []message.IMessageElement, source MessageSource) (r []glob
 					"type": "json",
 					"data": map[string]string{"data": o.Content, "resid": strconv.FormatInt(int64(o.Id), 10)},
 				}
+			}
+		case *message.AnimatedSticker:
+			m = global.MSG{
+				"type": "face",
+				"data": map[string]string{"id": strconv.FormatInt(int64(o.ID), 10), "type": "sticker"},
 			}
 		default:
 			continue
@@ -326,7 +310,7 @@ func ToStringMessage(e []message.IMessageElement, source MessageSource, isRaw ..
 				write("[CQ:at,qq=all]")
 				continue
 			}
-			write("[CQ:at,qq=%d]", o.Target)
+			write("[CQ:at,qq=%d]", uint64(o.Target))
 		case *message.RedBagElement:
 			write("[CQ:redbag,title=%s]", o.Title)
 		case *message.ForwardElement:
@@ -382,6 +366,8 @@ func ToStringMessage(e []message.IMessageElement, source MessageSource, isRaw ..
 			}
 		case *message.LightAppElement:
 			write(`[CQ:json,data=%s]`, CQCodeEscapeValue(o.Content))
+		case *message.AnimatedSticker:
+			write(`[CQ:face,id=%d,type=sticker]`, o.ID)
 		}
 	}
 	r = sb.String() // 内部已拷贝
@@ -486,6 +472,11 @@ func ToMessageContent(e []message.IMessageElement) (r []global.MSG) {
 					"type": "json",
 					"data": global.MSG{"data": o.Content, "resid": o.Id},
 				}
+			}
+		case *message.AnimatedSticker:
+			m = global.MSG{
+				"type": "face",
+				"data": global.MSG{"id": o.ID, "type": "sticker"},
 			}
 		default:
 			continue
@@ -909,16 +900,6 @@ func (bot *CQBot) ToElement(t string, d map[string]string, sourceType MessageSou
 	case "poke":
 		t, _ := strconv.ParseInt(d["qq"], 10, 64)
 		return &PokeElement{Target: t}, nil
-	case "gift":
-		if sourceType != MessageSourceGroup {
-			return nil, errors.New("private gift unsupported") // no free private gift
-		}
-		t, _ := strconv.ParseInt(d["qq"], 10, 64)
-		id, _ := strconv.Atoi(d["id"])
-		if id < 0 || id >= 14 {
-			return nil, errors.New("invalid gift id")
-		}
-		return &GiftElement{Target: t, GiftID: GiftID[id]}, nil
 	case "tts":
 		defer func() {
 			if r := recover(); r != nil {
@@ -958,17 +939,12 @@ func (bot *CQBot) ToElement(t string, d map[string]string, sourceType MessageSou
 		if err != nil {
 			return nil, err
 		}
-		return message.NewFace(int32(id)), nil
-	case "mention":
-		if !base.AcceptOneBot12Message {
-			return nil, errors.New("unsupported onebot 12 style")
+		if d["type"] == "sticker" {
+			return &message.AnimatedSticker{ID: int32(id)}, nil
 		}
-		fallthrough
+		return message.NewFace(int32(id)), nil
 	case "at":
 		qq := d["qq"]
-		if base.AcceptOneBot12Message && qq == "" {
-			qq = d["user_id"]
-		}
 		if qq == "all" {
 			return message.AtAll(), nil
 		}
@@ -1408,6 +1384,7 @@ func (bot *CQBot) readImageCache(b []byte, sourceType MessageSourceType) (messag
 	if sourceType == MessageSourceGuildChannel {
 		if len(bot.Client.GuildService.Guilds) == 0 {
 			err = errors.New("cannot query guild image: not any joined guild")
+			goto ok
 		}
 		guild := bot.Client.GuildService.Guilds[0]
 		rsp, err = bot.Client.GuildService.QueryImage(guild.GuildId, guild.Channels[0].ChannelId, hash, uint64(size))

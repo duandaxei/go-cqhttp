@@ -9,16 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Mrs4s/go-cqhttp/db"
-	"github.com/Mrs4s/go-cqhttp/internal/cache"
-
-	"github.com/Mrs4s/go-cqhttp/global"
-	"github.com/Mrs4s/go-cqhttp/internal/base"
-
 	"github.com/Mrs4s/MiraiGo/binary"
 	"github.com/Mrs4s/MiraiGo/client"
 	"github.com/Mrs4s/MiraiGo/message"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/Mrs4s/go-cqhttp/db"
+	"github.com/Mrs4s/go-cqhttp/global"
+	"github.com/Mrs4s/go-cqhttp/internal/base"
+	"github.com/Mrs4s/go-cqhttp/internal/cache"
 )
 
 // ToFormattedMessage 将给定[]message.IMessageElement转换为通过coolq.SetMessageFormat所定义的消息上报格式
@@ -149,12 +148,7 @@ func (bot *CQBot) guildChannelMessageEvent(c *client.QQClient, m *message.GuildC
 	if guild == nil {
 		return
 	}
-	var channel *client.ChannelInfo
-	for _, c := range guild.Channels {
-		if c.ChannelId == m.ChannelId {
-			channel = c
-		}
-	}
+	channel := guild.FindChannel(m.ChannelId)
 	source := MessageSource{
 		SourceType: MessageSourceGuildChannel,
 		PrimaryID:  m.GuildId,
@@ -166,16 +160,16 @@ func (bot *CQBot) guildChannelMessageEvent(c *client.QQClient, m *message.GuildC
 		"post_type":    "message",
 		"message_type": "guild",
 		"sub_type":     "channel",
-		"guild_id":     m.GuildId,
-		"channel_id":   m.ChannelId,
+		"guild_id":     fU64(m.GuildId),
+		"channel_id":   fU64(m.ChannelId),
 		"message_id":   fmt.Sprintf("%v-%v", m.Id, m.InternalId),
-		"user_id":      m.Sender.TinyId,
+		"user_id":      fU64(m.Sender.TinyId),
 		"message":      ToFormattedMessage(m.Elements, source, false), // todo: 增加对频道消息 Reply 的支持
 		"self_id":      bot.Client.Uin,
-		"self_tiny_id": bot.Client.GuildService.TinyId,
+		"self_tiny_id": fU64(bot.Client.GuildService.TinyId),
 		"time":         m.Time,
 		"sender": global.MSG{
-			"user_id":  m.Sender.TinyId,
+			"user_id":  fU64(m.Sender.TinyId),
 			"nickname": m.Sender.Nickname,
 		},
 	})
@@ -187,17 +181,17 @@ func (bot *CQBot) guildMessageReactionsUpdatedEvent(c *client.QQClient, e *clien
 		return
 	}
 	str := fmt.Sprintf("频道 %v(%v) 消息 %v 表情贴片已更新: ", guild.GuildName, guild.GuildId, e.MessageId)
-	var currentReactions []global.MSG
-	for _, r := range e.CurrentReactions {
+	currentReactions := make([]global.MSG, len(e.CurrentReactions))
+	for i, r := range e.CurrentReactions {
 		str += fmt.Sprintf("%v*%v ", r.Face.Name, r.Count)
-		currentReactions = append(currentReactions, global.MSG{
+		currentReactions[i] = global.MSG{
 			"emoji_id":    r.EmojiId,
 			"emoji_index": r.Face.Index,
 			"emoji_type":  r.EmojiType,
 			"emoji_name":  r.Face.Name,
 			"count":       r.Count,
 			"clicked":     r.Clicked,
-		})
+		}
 	}
 	if len(e.CurrentReactions) == 0 {
 		str += "无任何表情"
@@ -207,13 +201,14 @@ func (bot *CQBot) guildMessageReactionsUpdatedEvent(c *client.QQClient, e *clien
 		"post_type":          "notice",
 		"notice_type":        "message_reactions_updated",
 		"message_sender_uin": e.MessageSenderUin,
-		"guild_id":           e.GuildId,
-		"channel_id":         e.ChannelId,
+		"guild_id":           fU64(e.GuildId),
+		"channel_id":         fU64(e.ChannelId),
 		"message_id":         fmt.Sprint(e.MessageId), // todo: 支持数据库后转换为数据库id
-		"operator_id":        e.OperatorId,
+		"operator_id":        fU64(e.OperatorId),
 		"current_reactions":  currentReactions,
 		"time":               time.Now().Unix(),
-		"self_id":            c.Uin,
+		"self_id":            bot.Client.Uin,
+		"self_tiny_id":       fU64(bot.Client.GuildService.TinyId),
 		"user_id":            e.OperatorId,
 	})
 }
@@ -225,16 +220,65 @@ func (bot *CQBot) guildChannelUpdatedEvent(c *client.QQClient, e *client.GuildCh
 	}
 	log.Infof("频道 %v(%v) 子频道 %v(%v) 信息已更新", guild.GuildName, guild.GuildId, e.NewChannelInfo.ChannelName, e.NewChannelInfo.ChannelId)
 	bot.dispatchEventMessage(global.MSG{
-		"post_type":   "notice",
-		"notice_type": "channel_updated",
-		"guild_id":    e.GuildId,
-		"channel_id":  e.ChannelId,
-		"operator_id": e.OperatorId,
-		"time":        time.Now().Unix(),
-		"self_id":     c.Uin,
-		"user_id":     e.OperatorId,
-		"old_info":    convertChannelInfo(e.OldChannelInfo),
-		"new_info":    convertChannelInfo(e.NewChannelInfo),
+		"post_type":    "notice",
+		"notice_type":  "channel_updated",
+		"guild_id":     fU64(e.GuildId),
+		"channel_id":   fU64(e.ChannelId),
+		"operator_id":  fU64(e.OperatorId),
+		"time":         time.Now().Unix(),
+		"self_id":      bot.Client.Uin,
+		"self_tiny_id": fU64(bot.Client.GuildService.TinyId),
+		"user_id":      e.OperatorId,
+		"old_info":     convertChannelInfo(e.OldChannelInfo),
+		"new_info":     convertChannelInfo(e.NewChannelInfo),
+	})
+}
+
+func (bot *CQBot) guildChannelCreatedEvent(c *client.QQClient, e *client.GuildChannelOperationEvent) {
+	guild := c.GuildService.FindGuild(e.GuildId)
+	if guild == nil {
+		return
+	}
+	member, _ := c.GuildService.GetGuildMemberProfileInfo(e.GuildId, e.OperatorId)
+	if member == nil {
+		member = &client.GuildUserProfile{Nickname: "未知"}
+	}
+	log.Infof("频道 %v(%v) 内用户 %v(%v) 创建了子频道 %v(%v)", guild.GuildName, guild.GuildId, member.Nickname, member.TinyId, e.ChannelInfo.ChannelName, e.ChannelInfo.ChannelId)
+	bot.dispatchEventMessage(global.MSG{
+		"post_type":    "notice",
+		"notice_type":  "channel_created",
+		"guild_id":     fU64(e.GuildId),
+		"channel_id":   fU64(e.ChannelInfo.ChannelId),
+		"operator_id":  fU64(e.OperatorId),
+		"self_id":      bot.Client.Uin,
+		"self_tiny_id": fU64(bot.Client.GuildService.TinyId),
+		"user_id":      e.OperatorId,
+		"time":         time.Now().Unix(),
+		"channel_info": convertChannelInfo(e.ChannelInfo),
+	})
+}
+
+func (bot *CQBot) guildChannelDestroyedEvent(c *client.QQClient, e *client.GuildChannelOperationEvent) {
+	guild := c.GuildService.FindGuild(e.GuildId)
+	if guild == nil {
+		return
+	}
+	member, _ := c.GuildService.GetGuildMemberProfileInfo(e.GuildId, e.OperatorId)
+	if member == nil {
+		member = &client.GuildUserProfile{Nickname: "未知"}
+	}
+	log.Infof("频道 %v(%v) 内用户 %v(%v) 删除了子频道 %v(%v)", guild.GuildName, guild.GuildId, member.Nickname, member.TinyId, e.ChannelInfo.ChannelName, e.ChannelInfo.ChannelId)
+	bot.dispatchEventMessage(global.MSG{
+		"post_type":    "notice",
+		"notice_type":  "channel_destroyed",
+		"guild_id":     fU64(e.GuildId),
+		"channel_id":   fU64(e.ChannelInfo.ChannelId),
+		"operator_id":  fU64(e.OperatorId),
+		"self_id":      bot.Client.Uin,
+		"self_tiny_id": fU64(bot.Client.GuildService.TinyId),
+		"user_id":      e.OperatorId,
+		"time":         time.Now().Unix(),
+		"channel_info": convertChannelInfo(e.ChannelInfo),
 	})
 }
 

@@ -55,7 +55,7 @@ func (bot *CQBot) CQGetQiDianAccountInfo() global.MSG {
 func (bot *CQBot) CQGetGuildServiceProfile() global.MSG {
 	return OK(global.MSG{
 		"nickname":   bot.Client.GuildService.Nickname,
-		"tiny_id":    bot.Client.GuildService.TinyId,
+		"tiny_id":    fU64(bot.Client.GuildService.TinyId),
 		"avatar_url": bot.Client.GuildService.AvatarUrl,
 	})
 }
@@ -76,9 +76,9 @@ func (bot *CQBot) CQGetGuildList() global.MSG {
 		}
 		*/
 		fs = append(fs, global.MSG{
-			"guild_id":         info.GuildId,
+			"guild_id":         fU64(info.GuildId),
 			"guild_name":       info.GuildName,
-			"guild_display_id": info.GuildCode,
+			"guild_display_id": fU64(info.GuildCode),
 			// "channels":         channels,
 		})
 	}
@@ -94,7 +94,7 @@ func (bot *CQBot) CQGetGuildMetaByGuest(guildID uint64) global.MSG {
 		return Failed(100, "API_ERROR", err.Error())
 	}
 	return OK(global.MSG{
-		"guild_id":         meta.GuildId,
+		"guild_id":         fU64(meta.GuildId),
 		"guild_name":       meta.GuildName,
 		"guild_profile":    meta.GuildProfile,
 		"create_time":      meta.CreateTime,
@@ -102,7 +102,7 @@ func (bot *CQBot) CQGetGuildMetaByGuest(guildID uint64) global.MSG {
 		"max_robot_count":  meta.MaxRobotCount,
 		"max_admin_count":  meta.MaxAdminCount,
 		"member_count":     meta.MemberCount,
-		"owner_id":         meta.OwnerId,
+		"owner_id":         fU64(meta.OwnerId),
 	})
 }
 
@@ -128,6 +128,7 @@ func (bot *CQBot) CQGetGuildChannelList(guildID uint64, noCache bool) global.MSG
 	return OK(channels)
 }
 
+/*
 // CQGetGuildMembers 获取频道成员列表
 // @route(get_guild_members)
 func (bot *CQBot) CQGetGuildMembers(guildID uint64) global.MSG {
@@ -135,21 +136,116 @@ func (bot *CQBot) CQGetGuildMembers(guildID uint64) global.MSG {
 	if guild == nil {
 		return Failed(100, "GUILD_NOT_FOUND")
 	}
-	var members, bots, admins []global.MSG
-	for _, m := range guild.Members {
-		members = append(members, convertGuildMemberInfo(m))
+	return OK(nil) // todo
+}
+*/
+
+// CQGetGuildRoles 获取频道角色列表
+// @route(get_guild_roles)
+func (bot *CQBot) CQGetGuildRoles(guildID uint64) global.MSG {
+	r, err := bot.Client.GuildService.GetGuildRoles(guildID)
+	if err != nil {
+		log.Errorf("获取频道 %v 角色列表时出现错误: %v", guildID, err)
+		return Failed(100, "API_ERROR", err.Error())
 	}
-	for _, m := range guild.Bots {
-		bots = append(bots, convertGuildMemberInfo(m))
+	roles := make([]global.MSG, len(r))
+	for i, role := range r {
+		roles[i] = global.MSG{
+			"role_id":      fU64(role.RoleId),
+			"role_name":    role.RoleName,
+			"argb_color":   role.ArgbColor,
+			"independent":  role.Independent,
+			"member_count": role.Num,
+			"max_count":    role.MaxNum,
+			"owned":        role.Owned,
+			"disabled":     role.Disabled,
+		}
 	}
-	for _, m := range guild.Admins {
-		admins = append(admins, convertGuildMemberInfo(m))
+	return OK(roles)
+}
+
+// CQCreateGuildRole 创建频道角色
+// @route(create_guild_role)
+func (bot *CQBot) CQCreateGuildRole(guildID uint64, name string, color uint32, independent bool, initialUsers gjson.Result) global.MSG {
+	userSlice := []uint64{}
+	if initialUsers.IsArray() {
+		for _, user := range initialUsers.Array() {
+			userSlice = append(userSlice, user.Uint())
+		}
+	}
+	role, err := bot.Client.GuildService.CreateGuildRole(guildID, name, color, independent, userSlice)
+	if err != nil {
+		log.Errorf("创建频道 %v 角色时出现错误: %v", guildID, err)
+		return Failed(100, "API_ERROR", err.Error())
 	}
 	return OK(global.MSG{
-		"members": members,
-		"bots":    bots,
-		"admins":  admins,
+		"role_id": fU64(role),
 	})
+}
+
+// CQDeleteGuildRole 删除频道角色
+// @route(delete_guild_role)
+func (bot *CQBot) CQDeleteGuildRole(guildID uint64, roleID uint64) global.MSG {
+	err := bot.Client.GuildService.DeleteGuildRole(guildID, roleID)
+	if err != nil {
+		log.Errorf("删除频道 %v 角色时出现错误: %v", guildID, err)
+		return Failed(100, "API_ERROR", err.Error())
+	}
+	return OK(nil)
+}
+
+// CQSetGuildMemberRole 设置用户在频道中的角色
+// @route(set_guild_member_role)
+func (bot *CQBot) CQSetGuildMemberRole(guildID uint64, set bool, roleID uint64, users gjson.Result) global.MSG {
+	userSlice := []uint64{}
+	if users.IsArray() {
+		for _, user := range users.Array() {
+			userSlice = append(userSlice, user.Uint())
+		}
+	}
+	err := bot.Client.GuildService.SetUserRoleInGuild(guildID, set, roleID, userSlice)
+	if err != nil {
+		log.Errorf("设置用户在频道 %v 中的角色时出现错误: %v", guildID, err)
+		return Failed(100, "API_ERROR", err.Error())
+	}
+	return OK(nil)
+}
+
+// CQModifyRoleInGuild 修改频道角色
+// @route(update_guild_role)
+func (bot *CQBot) CQModifyRoleInGuild(guildID uint64, roleID uint64, name string, color uint32, indepedent bool) global.MSG {
+	err := bot.Client.GuildService.ModifyRoleInGuild(guildID, roleID, name, color, indepedent)
+	if err != nil {
+		log.Errorf("修改频道 %v 角色时出现错误: %v", guildID, err)
+		return Failed(100, "API_ERROR", err.Error())
+	}
+	return OK(nil)
+}
+
+// CQGetTopicChannelFeeds 获取话题频道帖子列表
+// @route(get_topic_channel_feeds)
+func (bot *CQBot) CQGetTopicChannelFeeds(guildID, channelID uint64) global.MSG {
+	guild := bot.Client.GuildService.FindGuild(guildID)
+	if guild == nil {
+		return Failed(100, "GUILD_NOT_FOUND")
+	}
+	channel := guild.FindChannel(channelID)
+	if channel == nil {
+		return Failed(100, "CHANNEL_NOT_FOUND")
+	}
+	if channel.ChannelType != client.ChannelTypeTopic {
+		return Failed(100, "CHANNEL_TYPE_ERROR")
+	}
+	feeds, err := bot.Client.GuildService.GetTopicChannelFeeds(guildID, channelID)
+	if err != nil {
+		log.Errorf("获取频道 %v 帖子时出现错误: %v", channelID, err)
+		return Failed(100, "API_ERROR", err.Error())
+	}
+	c := make([]global.MSG, 0, len(feeds))
+	for _, feed := range feeds {
+		c = append(c, convertChannelFeedInfo(feed))
+	}
+	return OK(c)
 }
 
 // CQGetFriendList 获取好友列表
@@ -579,6 +675,19 @@ func (bot *CQBot) CQSendGuildChannelMessage(guildID, channelID uint64, m gjson.R
 		log.Warnf("无法发送频道信息: 频道类型错误, 不接受文本信息")
 		return Failed(100, "CHANNEL_NOT_SUPPORTED_TEXT_MSG", "子频道类型错误, 无法发送文本信息")
 	}
+	fixAt := func(elem []message.IMessageElement) {
+		for _, e := range elem {
+			if at, ok := e.(*message.AtElement); ok && at.Target != 0 && at.Display == "" {
+				mem, _ := bot.Client.GuildService.GetGuildMemberProfileInfo(guildID, uint64(at.Target))
+				if mem != nil {
+					at.Display = "@" + mem.Nickname
+				} else {
+					at.Display = "@" + strconv.FormatInt(at.Target, 10)
+				}
+			}
+		}
+	}
+
 	var elem []message.IMessageElement
 	if m.Type == gjson.JSON {
 		elem = bot.ConvertObjectMessage(m, MessageSourceGuildChannel)
@@ -594,6 +703,7 @@ func (bot *CQBot) CQSendGuildChannelMessage(guildID, channelID uint64, m gjson.R
 			elem = bot.ConvertStringMessage(str, MessageSourceGuildChannel)
 		}
 	}
+	fixAt(elem)
 	mid := bot.SendGuildChannelMessage(guildID, channelID, &message.SendingMessage{Elements: elem})
 	if mid == "" {
 		return Failed(100, "SEND_MSG_API_ERROR", "请参考 go-cqhttp 端输出")
@@ -781,6 +891,7 @@ func (bot *CQBot) CQSetGroupCard(groupID, userID int64, card string) global.MSG 
 //
 // https://git.io/Jtz10
 // @route(set_group_special_title)
+// @rename(title->special_title)
 func (bot *CQBot) CQSetGroupSpecialTitle(groupID, userID int64, title string) global.MSG {
 	if g := bot.Client.FindGroup(groupID); g != nil {
 		if m := g.FindMember(userID); m != nil {
@@ -1259,7 +1370,7 @@ func (bot *CQBot) CQGetImage(file string) global.MSG {
 			"filename": r.ReadString(),
 			"url":      r.ReadString(),
 		}
-		local := path.Join(global.CachePath, file+"."+path.Ext(msg["filename"].(string)))
+		local := path.Join(global.CachePath, file+path.Ext(msg["filename"].(string)))
 		if !global.PathExists(local) {
 			if body, err := global.HTTPGetReadCloser(msg["url"].(string)); err == nil {
 				f, _ := os.OpenFile(local, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o0644)
